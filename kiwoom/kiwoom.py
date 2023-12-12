@@ -10,19 +10,22 @@ class Kiwoom(QAxWidget):
         
         ## 이벤트 루프 모음
         self.login_event_loop = None
-        self.detail_account_info_event_loop = None
-        self.detail_account_info_event_loop_2 = None
+        self.detail_account_info_event_loop = QEventLoop()
         ## ===
         
         ## 변수모음
         self.account_num = None
         self.account_stock_dic = {}
+        self.not_account_stock_dic = {}
         ## ===
         
         ## 계좌관련 변수
         self.use_money = 0
         self.use_money_percent = 0.5
         ## ===
+        
+        ## 스크린번호
+        self.screen_my_info = "2000"
         
         
         
@@ -51,7 +54,7 @@ class Kiwoom(QAxWidget):
        ## 요청내용
        ## 내가지은요청이름, TR번호, preNext, 화면번호(아무번호)
        ## 화면번호는 TR들을 그룹으로 만들어 관리할 수 있다. (스크린번호 200 * 호출 100)
-       self.dynamicCall("CommRqData(string,string,int,string)","예수금상세현황요청","opw00001","0","2000")
+       self.dynamicCall("CommRqData(string,string,int,string)","예수금상세현황요청","opw00001","0",self.screen_my_info)
        
        ## 이벤트 루프 호출
        self.detail_account_info_event_loop = QEventLoop()
@@ -68,11 +71,24 @@ class Kiwoom(QAxWidget):
         self.dynamicCall("SetInputValue(string,string)","비밀번호입력매체구분","00")
         self.dynamicCall("SetInputValue(string,string)","조회구분","2") ## 일반조회
         
-        self.dynamicCall("CommRqData(string,string,int,string)","계좌평가잔고내역요청","opw00018",sPrevNext,"2000")
+        self.dynamicCall("CommRqData(string,string,int,string)","계좌평가잔고내역요청","opw00018",sPrevNext,self.screen_my_info)
 
-        ## 이벤트 루프 호출
-        self.detail_account_info_event_loop_2 = QEventLoop()
-        self.detail_account_info_event_loop_2.exec_() 
+        ## 이벤트 루프 호출        
+        self.detail_account_info_event_loop.exec_() 
+        pass ## 함수종료
+        
+    ## 매체결 조회
+    def not_concaluded_account(self, sPrevNext="0"):
+        print("미체결 잔고조회")
+        self.dynamicCall("SetInputValue(string,string)","계좌번호",self.account_num)
+        self.dynamicCall("SetInputValue(string,string)","체결구분","1")
+        self.dynamicCall("SetInputValue(string,string)","매매구분","0")
+        
+        self.dynamicCall("CommRqData(string,string,int,string)","실시간미체결요청","opw10075",sPrevNext,self.screen_my_info)
+        ## 이벤트 루프 호출        
+        self.detail_account_info_event_loop.exec_() 
+        
+        pass
     
     def trdata_slot(self, sScrNo, sRQName, sTrCode, sRecordName, sPrevNext):
         '''
@@ -163,9 +179,68 @@ class Kiwoom(QAxWidget):
                 self.detail_account_mystock(sPrevNext)
             else :
                 ## 데이터 수신후, 이벤트 루프 종료
-                self.detail_account_info_event_loop_2.exit()
+                self.detail_account_info_event_loop.exit()
                 
-                 
+        ## === 실기간미체결요청    
+        if sRQName == "실시간미체결요청":
+            rows = self.dynamicCall("GetRepeatCnt(QString, QString)",sTrCode, sRQName)
+            cnt = 0
+            for i in range(rows):
+                code = self.dynamicCall("GetCommData(QString, QString, int, QString)",sTrCode, sRQName,i,"종목번호")
+                code = code.strip()[1:] ## 문자열 앞뒤 공백제거하고, 앞글자의 한자리 제거
+                
+                code_nm = self.dynamicCall("GetCommData(QString, QString, int, QString)",sTrCode, sRQName,i,"종목명")
+                code_nm = code_nm.strip()
+                
+                order_num = self.dynamicCall("GetCommData(QString, QString, int, QString)",sTrCode, sRQName,i,"주문번호")
+                order_num = order_num.strip()
+                
+                ## 접수->확인->체결
+                order_status = self.dynamicCall("GetCommData(QString, QString, int, QString)",sTrCode, sRQName,i,"주문상태")
+                order_status = order_status.strip()
+            
+                order_quantity = self.dynamicCall("GetCommData(QString, QString, int, QString)",sTrCode, sRQName,i,"주문수량")
+                order_quantity = int(order_quantity.strip())
+                
+                order_price = self.dynamicCall("GetCommData(QString, QString, int, QString)",sTrCode, sRQName,i,"주문가격")
+                order_price = order_price.strip().lstrip('+').lstrip('-')
+                
+                ## 매도, 매수, 정정, 취소
+                order_gubun = self.dynamicCall("GetCommData(QString, QString, int, QString)",sTrCode, sRQName,i,"주문구분")
+                order_gubun = order_gubun.strip()
+                
+                not_quantity = self.dynamicCall("GetCommData(QString, QString, int, QString)",sTrCode, sRQName,i,"미체결수량")
+                not_quantity = not_quantity.strip()
+                
+                ok_quantity = self.dynamicCall("GetCommData(QString, QString, int, QString)",sTrCode, sRQName,i,"체결량")
+                ok_quantity = ok_quantity.strip()
+                
+                if order_num in self.not_account_stock_dic:
+                    pass
+                else:
+                    self.not_account_stock_dic[order_num] = {}
+                
+                self.not_account_stock_dic[order_num].update({"종목코드":code})
+                self.not_account_stock_dic[order_num].update({"종목명":code_nm})
+                self.not_account_stock_dic[order_num].update({"주문번호":order_num})
+                self.not_account_stock_dic[order_num].update({"주문상태":order_status})
+                self.not_account_stock_dic[order_num].update({"주문수량":order_quantity})
+                self.not_account_stock_dic[order_num].update({"주문가격":order_price})
+                self.not_account_stock_dic[order_num].update({"주문구분":order_gubun})
+                self.not_account_stock_dic[order_num].update({"체결량":ok_quantity})
+                
+                cnt += 1
+                
+                print("미체결 종목 : %s" % self.not_account_stock_dic[order_num])
+                
+            ## 데이터 수신후, 이벤트 루프 종료
+            self.detail_account_info_event_loop.exit()
+                    
+                
+                
+                
+                
+
                    
                     
                 
