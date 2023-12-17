@@ -1,6 +1,8 @@
 from PyQt5.QAxContainer import *
 from PyQt5.QtCore import *
 from config.errorCode import *
+from PyQt5.QtTest import *
+
 
 
 class Kiwoom(QAxWidget):
@@ -8,9 +10,12 @@ class Kiwoom(QAxWidget):
         super().__init__()
         print("Kiwwom 클래스 입니다.")
         
+
+        
         ## 이벤트 루프 모음
         self.login_event_loop = None
         self.detail_account_info_event_loop = QEventLoop()
+        self.calculator_event_loop = QEventLoop()
         ## ===
         
         ## 변수모음
@@ -26,11 +31,9 @@ class Kiwoom(QAxWidget):
         
         ## 스크린번호
         self.screen_my_info = "2000"
+        self.screen_calculation_stock = "4000"
         
         
-        
-        
-
         
         self.get_ocx_instance()
         self.event_slots()
@@ -40,6 +43,16 @@ class Kiwoom(QAxWidget):
         self.get_account_info() ## 로그인후 계정정보 읽어오기 실행
         self.detail_account_info() ## 예수금 가지고 오기
         self.detail_account_mystock() ## 계좌평가 잔고 내역 요청
+        
+        ## self.not_concaluded_account() ## 미체결 요청
+        ## 시간간격 주기 (5초)
+        ## QTimer.singleShot(5000, self.not_concaluded_account)
+        
+        
+
+        self.calculator_fnc() ## 종목분석용, 임시용으로 실행
+
+        pass
         
     ## 예수금상세현황요청
     ## opw00001
@@ -77,7 +90,7 @@ class Kiwoom(QAxWidget):
         self.detail_account_info_event_loop.exec_() 
         pass ## 함수종료
         
-    ## 매체결 조회
+    ## 미체결 조회
     def not_concaluded_account(self, sPrevNext="0"):
         print("미체결 잔고조회")
         self.dynamicCall("SetInputValue(string,string)","계좌번호",self.account_num)
@@ -89,6 +102,9 @@ class Kiwoom(QAxWidget):
         self.detail_account_info_event_loop.exec_() 
         
         pass
+    
+    
+    
     
     def trdata_slot(self, sScrNo, sRQName, sTrCode, sRecordName, sPrevNext):
         '''
@@ -235,6 +251,25 @@ class Kiwoom(QAxWidget):
                 
             ## 데이터 수신후, 이벤트 루프 종료
             self.detail_account_info_event_loop.exit()
+        
+        if sRQName == "주식일봉차트조회":            
+        
+            code = self.dynamicCall("GetCommData(QString, QString, int, QString)",sTrCode, sRQName,0,"종목코드")
+            code = code.strip()
+            
+            print("%s 일봉데이터 요청" % code)
+            
+            rows = self.dynamicCall("GetRepeatCnt(QString, QString)", sTrCode, sRQName)
+            print(rows)
+            
+            ## 다음페이지가 있는 경우 경우 추가 요청
+            if sPrevNext == "2" :
+                self.day_kiwoom_db(code=code, sPrevNext=sPrevNext)
+            else :
+                ## 데이터 수신후, 이벤트 루프 종료
+                self.calculator_event_loop.exit()
+            
+            
                     
                 
                 
@@ -281,6 +316,50 @@ class Kiwoom(QAxWidget):
         ## 첫번째 계좌번호
         self.account_num = account_numbers[0]
         print("나의 보유 계좌번호 %s" % account_numbers[0])
+    
+    def stop_screen_cancel(self, sScrNo=None):
+        self.dynamicCall("DisconnectRealData(QString)",sScrNo)
+        
+    
+    ## 종목 가지고 오기
+    def get_code_list_by_market(self, market_code):
+        '''
+        종목 코드목록 반환
+        '''
+        code_list = self.dynamicCall("GetCodeListByMarket(QString)", market_code)
+        code_list = code_list.split(";")[:-1]
+        print(code_list)
+        return code_list
+    
+    def calculator_fnc(self):
+        code_list = self.get_code_list_by_market("10") ## 코스닥
+        print("코스닥 갯수 %s" % len(code_list))
+        
+        
+        for idx, code in enumerate(code_list):
+            self.dynamicCall("DisconnectRealData(QString)", self.screen_calculation_stock)
+            print("%s / %s : Kosdaq Stock %s is updating" % (idx+1, len(code_list), code) )
+        
+            self.day_kiwoom_db(code=code)
+            
+        
+    ## 과거 데이터 가지고 오기(tr요청)
+    def day_kiwoom_db(self, code=None, date=None, sPrevNext="0"):
+        print("과거 데이터 가지고 오기")
+        QTest.qWait(3600) ## 3.6초마다 지연
+        
+        self.dynamicCall("SetInputValue(string,string)","종목코드",code)
+        self.dynamicCall("SetInputValue(string,string)","수정주가구분","1")
+        
+        ## 오늘 날짜가 아닌 경우에
+        if date != None :            
+            self.dynamicCall("SetInputValue(string,string)","기준일자",date)
+        
+        self.dynamicCall("CommRqData(string,string,int,string)","주식일봉차트조회","opt10081",sPrevNext,self.screen_calculation_stock)
+        
+        
+        ## 이벤트 루프 호출        
+        self.calculator_event_loop.exec_() 
         
          
         
