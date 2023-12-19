@@ -24,6 +24,11 @@ class Kiwoom(QAxWidget):
         self.not_account_stock_dic = {}
         ## ===
         
+        ## 종목분석용
+        self.calcul_data = []
+        
+        
+        
         ## 계좌관련 변수
         self.use_money = 0
         self.use_money_percent = 0.5
@@ -252,6 +257,7 @@ class Kiwoom(QAxWidget):
             ## 데이터 수신후, 이벤트 루프 종료
             self.detail_account_info_event_loop.exit()
         
+        ## 주식일봉차트조회
         if sRQName == "주식일봉차트조회":            
         
             code = self.dynamicCall("GetCommData(QString, QString, int, QString)",sTrCode, sRQName,0,"종목코드")
@@ -259,29 +265,131 @@ class Kiwoom(QAxWidget):
             
             print("%s 일봉데이터 요청" % code)
             
-            rows = self.dynamicCall("GetRepeatCnt(QString, QString)", sTrCode, sRQName)
-            print(rows)
+            cnt = self.dynamicCall("GetRepeatCnt(QString, QString)", sTrCode, sRQName)
+            print("남은 일자 수 %s" % cnt)
+            
+            ## data = self.dynamicCall("GetCommDataEx(QString, QString)", sTrCode, sRQName)
+            ## [["",현재가,거래량, 거래대금,날짜,시가,고가,저가,""] [] ]
+            
+            ## 한번 조회시 600일 단위로 데이터를 받을 수 있다.
+            for i in range(cnt):
+                data = []
+                current_price = self.dynamicCall("GetCommData(QString, QString, int, QString)",sTrCode, sRQName,i,"현재가")
+                value = self.dynamicCall("GetCommData(QString, QString, int, QString)",sTrCode, sRQName,i,"거래량")
+                trading_value = self.dynamicCall("GetCommData(QString, QString, int, QString)",sTrCode, sRQName,i,"거래대금")
+                date = self.dynamicCall("GetCommData(QString, QString, int, QString)",sTrCode, sRQName,i,"일자")
+                start_price = self.dynamicCall("GetCommData(QString, QString, int, QString)",sTrCode, sRQName,i,"시가")
+                high_price = self.dynamicCall("GetCommData(QString, QString, int, QString)",sTrCode, sRQName,i,"고가")
+                low_price = self.dynamicCall("GetCommData(QString, QString, int, QString)",sTrCode, sRQName,i,"저가")
+                
+                data.append("") ## 양식을 맞추기 위해서 삽입
+                data.append(current_price.strip())
+                data.append(value.strip())
+                data.append(trading_value.strip())
+                data.append(date.strip())
+                data.append(start_price.strip())
+                data.append(high_price.strip())
+                data.append(low_price.strip())
+                data.append("")
+                
+                self.calcul_data.append(data.copy())
+                
+            print(len(self.calcul_data))
+                
+            
             
             ## 다음페이지가 있는 경우 경우 추가 요청
             if sPrevNext == "2" :
                 self.day_kiwoom_db(code=code, sPrevNext=sPrevNext)
             else :
+                ## 데이터 수신이 완료된 경우, 이평선 로직 작성
+                print("총 일수  %s" % len(self.calcul_data))
+                pass_success = False
+                
+                ## 120일 이평선을 그리 만큼의 데이터가 있는지 체크
+                if self.calcul_data == None or len(self.calcul_data) < 120:
+                    pass_success = False
+                else:
+                    # 120일 이상 되면은
+                    total_price = 0
+                    for value in self.calcul_data[:120]:
+                        total_price += int(value[1])
+                    moving_average_price = total_price / 120
+                    
+                    # 오늘자 주가가 120일 이평선에 걸쳐 있는지 확인
+                    bottom_stock_price = False
+                    check_price = None
+                    if int(self.calcul_data[0][7]) <= moving_average_price and moving_average_price <= int(self.calcul_data[0][6]):
+                        print("오늘의 주가가 120 이평선에 걸쳐 있는지 확인")
+                        bottom_stock_price = True
+                        check_price = int(self.calcul_data[0][6])
+                    
+                    ## 과거 일봉드이 120일 이평선 보다 밑에 있는지 확인
+                    ## 그렇게 확인을 하다가 일봉이 120일 이펴언 보다 위에 있으면 계산진행
+                    
+                    prev_price = None # 과거의 일봉 저가
+                    
+                    if bottom_stock_price == True:
+                        
+                        moving_average_price_prev= 0
+                        price_top_moving = False
+                        idx = 1
+                        
+                        
+                        while True:
+                            if len(self.calcul_data[idx:]) < 120: #120일치가 있는지 계속 확인
+                                print("120일치가 없음!")
+                                break
+                            
+                            total_price = 0
+                            for value in self.calcul_data[idx:120+idx]:
+                                total_price += int(value[1])
+                                
+                            moving_average_price_prev = total_price / 120
+                            
+                            ## 20일 정도는 이평선 아래에 유지하고 있는지 확인
+                            if moving_average_price_prev <= int(self.calcul_data[idx][6]) and idx <= 20 :
+                                print("20일 동안 주가가 120일 이평선과 같거나 위에 있으면 조건 통과 못함")
+                                price_top_moving = False
+                                break
+                            
+                            elif int(self.calcul_data[idx][7]) > moving_average_price_prev and idx > 20:
+                                print("120일 이평선 위에 있는 일봉 확인됨")
+                                price_top_moving = True
+                                prev_price = int(self.calcul_data[idx][7]) # 찾아낸 저가 가격을 저장함
+                                break
+                            
+                            idx += 1
+                            
+                        ## 해당 부분 이평선이 가장 최근 일자의 이평선 가격보다 낮은지 확인
+                        if price_top_moving == True:
+                            if moving_average_price > moving_average_price_prev and check_price > prev_price :
+                                print("포착된 이평선의 가격이 오늘자(최근일자) 이평선 가격보다 낮은 것 확인됨")
+                                print("포착된 부분의 일봉 저가각 오늘자 일봉의 고가보다 낮은지 확인됨")
+                                pass_success = True
+                      
+                        
+                if pass_success == True:
+                    print("조건부 통과됨")
+                            
+                    code_nm = self.dynamicCall("GetMasterCodeName(QString)", code)
+                            
+                    f = open("files/condition_stock.txt", "a", encoding="utf8")
+                    f.write("%s\t%s\t%s\n" % (code, code_nm, str(self.calcul_data[0][1])))
+                    f.close()
+                elif pass_success == False:
+                    print("조건부 통과 못함.xxx")
+                
+                self.calcul_data.clear()
+                                
+           
+                    
+                
                 ## 데이터 수신후, 이벤트 루프 종료
                 self.calculator_event_loop.exit()
             
             
-                    
-                
-                
-                
-                
 
-                   
-                    
-                
-
-                
-        
         pass 
             
 
