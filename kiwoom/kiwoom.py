@@ -5,12 +5,15 @@ from PyQt5.QtCore import *
 from config.errorCode import *
 from PyQt5.QtTest import *
 
+from config.KiwoomType import *
 
 
 class Kiwoom(QAxWidget):
     def __init__(self):
         super().__init__()
         print("Kiwwom 클래스 입니다.")
+        
+        self.realType = RealType() ## 클래스 가지고오기
         
 
         
@@ -47,6 +50,7 @@ class Kiwoom(QAxWidget):
         
         self.get_ocx_instance()
         self.event_slots()
+        self.real_event_slots() ## 실시간 이벤트 슬롯도 같이 실행
         
         self.signal_login_commConnect()
         
@@ -63,10 +67,26 @@ class Kiwoom(QAxWidget):
         ### self.calculator_fnc() ## 종목분석용, 임시용으로 실행
         
         self.read_code(self)
-
         ## 포트폴리오, 보유종목, 미체결종목등을 중복되지 않도록 통합후, 스크린 번호 할당
-        self.ㅊ # 스크린번호 할당
+        self.screen_number_setting()  # 스크린번호 할당
         
+        ## === 실시간 데이터 처리
+        ### 1.장시작여부 체크
+        self.screen_start_stop_real = "1000"
+        self.dynamicCall("SetRealReg(QString, QString, QString, QString)", 
+                            self.screen_start_stop_real, 
+                            '', # 장시작 여부만 체크하기 때문에 종목은 지정하지 않음
+                            self.realType.REALTYPE['장시작시간']['장운영구분'], 
+                            "0") ## 최초등록, 이후에 등록하는 실시간은 1로 설정
+        
+        ## 실기간으로 살펴볼 종목추가
+        for code in self.portfolio_stock_dict.keys():
+            
+            screen_num = self.portfolio_stock_dict[code]['스크린번호']
+            fids = self.realType.REALTYPE['주식체결']['체결시간']
+            self.dynamicCall("SetRealReg(QString, QString, QString, QString)", screen_num, code, fids, "1") ## 추가등록 1
+
+            print("실시간 코드 등록:%s, 스크린번호:%s, fid번호:%s" % (code, screen_num, fids))
         pass
         
     ## 예수금상세현황요청
@@ -88,8 +108,6 @@ class Kiwoom(QAxWidget):
        self.detail_account_info_event_loop = QEventLoop()
        self.detail_account_info_event_loop.exec_() 
        
-       
-       pass
    
     def detail_account_mystock(self, sPrevNext="0"):
         print("계좌평가 잔고내역 요청")
@@ -414,6 +432,11 @@ class Kiwoom(QAxWidget):
         self.OnEventConnect.connect(self.login_slot)
         ## Tr데이터 이벤트 연결
         self.OnReceiveTrData.connect(self.trdata_slot)
+        
+    def real_event_slots(self):
+        self.OnReceiveRealData.connect(self.realdata_slot)
+        
+        
     
     def login_slot(self, errCode):
         print(errors(errCode))
@@ -543,12 +566,91 @@ class Kiwoom(QAxWidget):
                 self.portfolio_stock_dict[code].update({"주문용스크린번호":str(self.scrren_meme_stock)})
                 
             elif code not in self.portfolio_stock_dict.keys():
-                self.portfolio_stock_dict.update({code:{"스크린번호":str(self.screen_real_stock)}})
-                self.portfolio_stock_dict.update({code:{"주문용스크린번호":str(self.screen_meme_stock)}})
+                self.portfolio_stock_dict.update({code:{"스크린번호":str(self.screen_real_stock), "주문용스크린번호":str(self.screen_meme_stock)}})
+
                 
             cnt += 1
             
         print(self.portfolio_stock_dict)
+        
+    ## 실시간 데이터수신 슬롯
+    def realdata_slot(self, sCode, sRealType, sRealData):
+        print(sCode)
+        
+        if sRealType == "장시작시간":
+            fid = self.realType.REALTYPE[sRealType]['장운영구분'] # 0:장시작전, 2:장종료전(20분), 3:장시작, 4,8:장종료(30분), 9:장마감
+            value = self.dynamicCall("GetCommRealData(QString, int)", sCode, fid)
+            
+            if value == "0":
+                print("장시작전")
+            elif value == "3":
+                print("장시작")
+            elif value == "2":
+                print("장 종료, 동시호가로 넘어감")
+            elif value == "4":
+                print("3시30분 장 종료")
+                
+        elif sRealType == "주식체결":
+            print(sCode)
+            a = self.dynamicCall("GetCommRealData(QString, int)", sCode, self.realType.REALTYPE[sRealType]['체결시간'])
+            
+            b = self.dynamicCall("GetCommRealData(QString, int)", sCode, self.realType.REALTYPE[sRealType]['현재가'])
+            b = abs(int(b))
+            
+            c = self.dynamicCall("GetCommRealData(QString, int)", sCode, self.realType.REALTYPE[sRealType]['전일대비'])
+            c = abs(int(c))
+            
+            d = self.dynamicCall("GetCommRealData(QString, int)", sCode, self.realType.REALTYPE[sRealType]['등락율'])
+            d = float(d)
+            
+            e = self.dynamicCall("GetCommRealData(QString, int)", sCode, self.realType.REALTYPE[sRealType]['(최우선)매도호가'])
+            e = abs(int(e))
+            
+            f = self.dynamicCall("GetCommRealData(QString, int)", sCode, self.realType.REALTYPE[sRealType]['(최우선)매수호가'])
+            f = abs(int(f))
+            
+            g = self.dynamicCall("GetCommRealData(QString, int)", sCode, self.realType.REALTYPE[sRealType]['거래량'])
+            g = abs(int(g))
+            
+            h = self.dynamicCall("GetCommRealData(QString, int)", sCode, self.realType.REALTYPE[sRealType]['누적거래량'])
+            h = abs(int(h))
+            
+            i = self.dynamicCall("GetCommRealData(QString, int)", sCode, self.realType.REALTYPE[sRealType]['고가'])
+            i = abs(int(i))
+            
+            j = self.dynamicCall("GetCommRealData(QString, int)", sCode, self.realType.REALTYPE[sRealType]['시가'])
+            j = abs(int(j))
+            
+            k = self.dynamicCall("GetCommRealData(QString, int)", sCode, self.realType.REALTYPE[sRealType]['저가'])
+            k = abs(int(k))
+            
+            if sCode not in self.portfolio_stock_dict:
+                self.portfolio_stock_dict.update({sCode:{}})
+                
+            self.portfolio_stock_dict[sCode].update({"체결시간":a})
+            self.portfolio_stock_dict[sCode].update({"현재가":b})
+            self.portfolio_stock_dict[sCode].update({"전일대비":c})
+            self.portfolio_stock_dict[sCode].update({"등락율":d})
+            self.portfolio_stock_dict[sCode].update({"(최우선)매도호가":e})
+            self.portfolio_stock_dict[sCode].update({"(최우선)매수호가":f})
+            self.portfolio_stock_dict[sCode].update({"거래량":g})
+            self.portfolio_stock_dict[sCode].update({"누적거래량":h})
+            self.portfolio_stock_dict[sCode].update({"고가":i})
+            self.portfolio_stock_dict[sCode].update({"시가":j})
+            self.portfolio_stock_dict[sCode].update({"저가":k})
+
+            print(self.portfolio_stock_dict[sCode])
+            
+            ## 실시간 조건 검색
+            
+                                                 
+            
+            
+                
+            
+            
+        
+        
             
                 
                 
